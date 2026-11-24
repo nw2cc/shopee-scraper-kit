@@ -22,15 +22,24 @@
 
 macOS 用户可以 `brew install node@22`，或从官网下载 `.pkg`。
 
-### 第 2 步：放好技能文件夹
+### 第 2 步：把技能放进目录
 
-1. 按 `Win + R`，输入 `%USERPROFILE%\.workbuddy\skills`，回车
-   - 目录不存在就先手动建：`.workbuddy` → `skills`
-2. 把 **`shopee-shop-scraper` 整个文件夹**复制进去
+**方式 A：命令行克隆（推荐，以后能一键更新）**
 
-macOS 对应目录是 `~/.workbuddy/skills/`。
+按 `Win + R` 输入 `cmd` 回车，粘贴这一条并回车：
 
-⚠️ **最容易出错的地方**：复制完之后，路径必须是
+```
+git clone https://github.com/nw2cc/shopee-scraper-kit.git "%USERPROFILE%\.workbuddy\skills\shopee-shop-scraper"
+```
+
+> 需要电脑上装了 Git。没装的话在 [git-scm.com](https://git-scm.com/download/win) 下载安装，一路默认即可。
+
+**方式 B：下载压缩包（不需要 Git，但以后只能手动重装）**
+
+1. 打开 https://github.com/nw2cc/shopee-scraper-kit 点 `Code → Download ZIP`
+2. 解压后把里面的**全部文件**放到 `%USERPROFILE%\.workbuddy\skills\shopee-shop-scraper\`
+
+**两种方式都要检查**：路径必须是
 
 ```
 C:\Users\你的用户名\.workbuddy\skills\shopee-shop-scraper\SKILL.md
@@ -39,7 +48,7 @@ C:\Users\你的用户名\.workbuddy\skills\shopee-shop-scraper\SKILL.md
 而不是
 
 ```
-...\skills\shopee-shop-scraper\shopee-shop-scraper\SKILL.md
+...\skills\shopee-shop-scraper\shopee-scraper-kit\SKILL.md
 ```
 
 多套了一层，WorkBuddy 就认不出这个技能。检查方法：双击进 `shopee-shop-scraper` 文件夹，**应该直接看到 `SKILL.md`**。
@@ -78,6 +87,24 @@ C:\Users\你的用户名\.workbuddy\skills\shopee-shop-scraper\SKILL.md
 **用你自己的浏览器，所以不需要另外登录**——你平时怎么逛虾皮，它就怎么逛。
 
 ---
+
+## 怎么更新
+
+有新版时，直接对 WorkBuddy 说：
+
+> 更新虾皮商品工具
+
+它会检查版本、拉取更新，然后提醒你重启 WorkBuddy。
+
+手动更新（仅对用「方式 A」克隆安装的有效）：
+
+```
+git -C "%USERPROFILE%\.workbuddy\skills\shopee-shop-scraper" pull --ff-only
+```
+
+用「方式 B」下载压缩包安装的没有更新能力，需要重新下载覆盖。
+
+> 如果你改过里面的代码，更新会被拒绝，而不是覆盖掉你的改动。先提交或备份再更新。
 
 ## 第一次用，请先手动开一次店铺页
 

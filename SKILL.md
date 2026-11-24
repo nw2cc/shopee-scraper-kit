@@ -164,3 +164,50 @@ UTF-8 with BOM，Excel 双击直接打开不乱码。
 | `UNEXPECTED` | 未预期异常 | 看 stderr 的堆栈 |
 
 采集依赖 `rcmd_items` 与 `pdp/get_pc` 两个接口。上游改版会导致采集失败，此时看 [references/page-internals.md](references/page-internals.md) 里的响应结构重新适配。
+
+## 安装与更新
+
+本技能从公开仓库分发：`https://github.com/nw2cc/shopee-scraper-kit`。正规安装方式是把仓库 clone 到技能目录，技能目录本身即仓库工作副本：
+
+```bash
+git clone https://github.com/nw2cc/shopee-scraper-kit.git <skill_dir>
+```
+
+### 用户要求更新时
+
+「更新虾皮商品工具」「升级虾皮抓取」「有没有新版本」这类说法都触发本节。
+
+**1. 确认目录是 git 仓库**
+
+```bash
+git -C <skill_dir> rev-parse --is-inside-work-tree
+```
+
+失败说明用户当初是复制文件夹安装的（不是 clone）。此时不要就地 `git init` 覆盖——先让用户确认，然后把原目录改名备份，再重新 clone。
+
+**2. 查有无新版本**
+
+```bash
+git -C <skill_dir> fetch --tags -q && git -C <skill_dir> log --oneline HEAD..origin/main
+```
+
+- 无输出 = 已是最新。报当前版本：`git -C <skill_dir> describe --tags --always`
+- 有输出 = 有更新，列出这些提交的标题给用户看，再进入第 3 步
+
+**3. 更新**
+
+```bash
+git -C <skill_dir> pull --ff-only
+```
+
+`--ff-only` 在本地有未提交改动时会失败——这是有意的，不要用 `reset --hard` 强推。失败时告诉用户本地改过哪些文件，让他决定保留还是丢弃。
+
+**4. 告诉用户重启 WorkBuddy**
+
+更新后必须重启才生效：SKILL.md 与脚本路径在会话启动时读取，当前会话仍在用旧版本。汇报格式：旧版本 → 新版本，改了什么（取 CHANGELOG.md 对应段落）。
+
+### 硬性约束
+
+- 不要在用户没要求时主动检查更新或执行 `pull`
+- 不要用 `git reset --hard`、`git clean`、`--force` 处理更新冲突
+- 更新只动技能目录，不要碰用户其它目录

@@ -30,14 +30,21 @@
 node -v   # v22.x
 ```
 
-### 2. 放置技能
+### 2. 克隆到技能目录
 
-把 `shopee-shop-scraper` 整个文件夹放到 WorkBuddy 的技能目录：
+仓库根目录就是技能本体，直接 clone 到技能目录即可：
 
-- macOS / Linux：`~/.workbuddy/skills/`
-- Windows：`%USERPROFILE%\.workbuddy\skills\`
+```bash
+# macOS / Linux
+git clone https://github.com/nw2cc/shopee-scraper-kit.git ~/.workbuddy/skills/shopee-shop-scraper
+```
 
-放完后路径应当是 `.../skills/shopee-shop-scraper/SKILL.md`，不要多套一层同名目录。
+```powershell
+# Windows PowerShell
+git clone https://github.com/nw2cc/shopee-scraper-kit.git "$env:USERPROFILE\.workbuddy\skills\shopee-shop-scraper"
+```
+
+目录名必须是 `shopee-shop-scraper`，且里面直接能看到 `SKILL.md`。用 clone 安装的好处是后续更新只需 `git pull`。
 
 ### 3. 开启 Chrome 远程调试
 
@@ -46,12 +53,24 @@ Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **Allow rem
 验证：
 
 ```bash
-node shopee-shop-scraper/scripts/scrape.mjs --check-browser
+node scripts/scrape.mjs --check-browser
 ```
 
 输出 `{"event":"browser_ok","browser":"Chrome/..."}` 即就绪。
 
 使用者的图文步骤与排错见 [docs/install-guide.md](docs/install-guide.md)。
+
+## 更新
+
+对 WorkBuddy 说「更新虾皮商品工具」即可，Agent 会按 `SKILL.md` 的流程检查并拉取。手动更新：
+
+```bash
+git -C ~/.workbuddy/skills/shopee-shop-scraper pull --ff-only
+```
+
+更新后重启 WorkBuddy 生效。版本历史见 [CHANGELOG.md](CHANGELOG.md)。
+
+如果本地改过代码，`--ff-only` 会拒绝更新而不是覆盖你的改动，先提交或 stash 再拉。
 
 ## 使用
 
@@ -62,7 +81,7 @@ node shopee-shop-scraper/scripts/scrape.mjs --check-browser
 或走命令行：
 
 ```bash
-node shopee-shop-scraper/scripts/scrape.mjs \
+node scripts/scrape.mjs \
   --shop https://shopee.com.my/simplanet \
   --out ~/Desktop
 ```
@@ -102,28 +121,28 @@ stdout 逐行输出 JSON 事件（`start` / `list_page` / `items_found` / `item`
 
 ## 项目结构
 
+仓库根目录即 WorkBuddy 技能目录：
+
 ```
-shopee-scraper-kit/
+├── SKILL.md                     技能定义、执行流程、事件协议、更新流程
+├── scripts/scrape.mjs           采集实现
+├── references/page-internals.md 页面接口字段说明
 ├── README.md
-├── docs/
-│   └── install-guide.md             使用者安装与排错
-└── shopee-shop-scraper/
-    ├── SKILL.md                     技能定义、执行流程、事件协议
-    ├── scripts/scrape.mjs           采集实现
-    └── references/page-internals.md 页面接口字段说明
+├── CHANGELOG.md
+└── docs/install-guide.md        使用者安装与排错
 ```
 
 ## 开发
 
 ```bash
 # 解析自检：32 项断言，含 CSV 往返；不联网、不开浏览器
-node shopee-shop-scraper/scripts/scrape.mjs --self-test
+node scripts/scrape.mjs --self-test
 
 # 浏览器连接检查
-node shopee-shop-scraper/scripts/scrape.mjs --check-browser
+node scripts/scrape.mjs --check-browser
 
 # 小量真实验证
-node shopee-shop-scraper/scripts/scrape.mjs --shop <店铺链接> --max-items 3
+node scripts/scrape.mjs --shop <店铺链接> --max-items 3
 ```
 
 实现要点：

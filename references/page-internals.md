@@ -101,9 +101,18 @@ data.shop_vouchers[]
   └ voucher_discount_type  0 = 固定金额
 ```
 
-实现按规格售价筛 `min_spend <= price` 的券，取 `used_price` 最大的一张。`voucher_discount_type` 非 0（百分比券）不处理——字段语义未实测，猜一个值会产出错数字。
+判断券是哪种类型看字段，不看 `voucher_discount_type`：
 
-`data.product_price.final_price_info.final_price_vouchers.shop_voucher.voucher_discount` 是前端为选中规格算出的那张券，可用来印证上面的规则。
+| 字段 | 含义 |
+|---|---|
+| `discount_percentage > 0` | 百分比券，折抵 = 售价 × 比例，受 `discount_cap` 封顶 |
+| 否则 `used_price` / `discount_value` | 固定金额券 |
+
+固定金额券的 `discount_percentage` 和 `discount_cap` 返回 `0`（不是 `null`），判定时要用 `> 0`。
+
+百分比字段的单位未拿到真实样本：`1200` 和 `12` 都可能表示 12%。实现按「大于 100 视为 ×100 存储」处理，1%–100% 区间两种存储结果一致。
+
+`data.product_price.final_price_info.final_price_vouchers.shop_voucher.voucher_discount` 是前端为选中规格算出的那张券，可用来印证上面的规则。注意 `price_breakdown` 只对应当前选中规格——实测 `model[0].price` 是 RM10.6 时，`price_breakdown.price` 显示的是默认选中规格的 RM20。
 
 ## 3. 站点差异
 

@@ -97,6 +97,7 @@ node scripts/scrape.mjs \
 | `--no-voucher` | 关 | 不算参考券后价 |
 | `--cdp-port` | `9222` | Chrome 调试端口 |
 | `--check-browser` | — | 只检查能否连上 Chrome，不采集 |
+| `--probe` | — | 抓单个商品的价格与券结构，排查站点差异 |
 | `--self-test` | — | 离线解析自检，不联网 |
 
 stdout 逐行输出 JSON 事件（`start` / `list_page` / `items_found` / `item` / `count_mismatch` / `done` / `error`），日志走 stderr。

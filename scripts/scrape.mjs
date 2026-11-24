@@ -240,24 +240,47 @@ function parsePdpPayload(body) {
 const round2 = (n) => Math.round(n * 100) / 100;
 
 /**
+ * 一张券在该售价下的折抵金额（元）。
+ *
+ * 券有两种形态，靠字段区分而不是 voucher_discount_type：
+ * - 百分比券：discount_percentage 有值，折抵 = 售价 × 比例，可被 discount_cap 封顶
+ * - 固定金额券：discount_value / used_price 有值
+ *
+ * 百分比单位未拿到真实样本（马来站这批商品全是固定券），按 >100 视为
+ * ×100 存储（1200 = 12%）处理，其余按整数百分比。1%-100% 区间两种存储
+ * 都会得到同一个结果；超出这个区间需要真实样本重新确认。
+ */
+function voucherAmount(v, price) {
+  const pctRaw = Number(v.discount_percentage);
+  if (Number.isFinite(pctRaw) && pctRaw > 0) {
+    const rate = pctRaw > 100 ? pctRaw / 10000 : pctRaw / 100;
+    let amount = price * rate;
+    const cap = toMoney(v.discount_cap);
+    if (cap !== null && cap > 0) amount = Math.min(amount, cap);
+    return round2(amount);
+  }
+  return toMoney(v.used_price ?? v.discount_value);
+}
+
+/**
  * 从店铺券里挑出该售价可用的、折抵最大的一张。
  *
- * 券字段单位是 1/100000，price 是元。只处理固定金额券（voucher_discount_type=0）；
- * 百分比券的字段语义未经实测，返回 null 而不是猜一个值。
+ * 券字段单位是 1/100000，price 是元。折抵额不会超过售价本身。
  */
 function pickVoucherDiscount(vouchers, price) {
-  if (!Array.isArray(vouchers) || price === null || price === undefined) return null;
+  if (!Array.isArray(vouchers) || price === null || price === undefined || price <= 0) {
+    return null;
+  }
   let best = 0;
   for (const v of vouchers) {
     if (!v || typeof v !== 'object') continue;
-    const type = v.voucher_discount_type ?? 0;
-    if (type !== 0) continue;
     const minSpend = toMoney(v.min_spend);
     if (minSpend !== null && price < minSpend) continue;
-    const amount = toMoney(v.used_price ?? v.discount_value);
+    const amount = voucherAmount(v, price);
     if (amount !== null && amount > best) best = amount;
   }
-  return best > 0 ? round2(best) : null;
+  if (best <= 0) return null;
+  return round2(Math.min(best, price));
 }
 
 function toMoney(raw) {
@@ -963,10 +986,11 @@ function parseArgs(argv) {
     readexpr: false,
     selfTest: false,
     checkBrowser: false,
+    probe: '',
   };
   const takesValue = new Set([
     'shop', 'site', 'out', 'max-items', 'delay-ms', 'timeout',
-    'login-wait', 'header', 'shop-name', 'cdp-port',
+    'login-wait', 'header', 'shop-name', 'cdp-port', 'probe',
   ]);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -992,6 +1016,7 @@ function parseArgs(argv) {
       case 'header': opts.headerLang = value === 'en' ? 'en' : 'zh'; break;
       case 'shop-name': opts.shopName = value; break;
       case 'cdp-port': opts.cdpPort = Number(value) || 9222; break;
+      case 'probe': opts.probe = value; break;
     }
   }
   return opts;
@@ -1016,10 +1041,119 @@ function printHelp() {
   --no-voucher      不算参考券后价
   --cdp-port        Chrome 调试端口，默认 9222
   --check-browser   只检查能否连上 Chrome，不采集
+  --probe <商品URL> 抓单个商品的价格与券结构，用于排查站点差异
   --self-test       跑离线解析自检，不联网
 
 前置：Chrome 已开启远程调试（chrome://inspect/#remote-debugging）。
 `);
+}
+
+/**
+ * 诊断单个商品：抓一次 pdp，输出券与价格明细。
+ *
+ * 不同站点的券类型分布不同（固定金额 / 百分比 / 带上限），没有真实样本时
+ * 只能按启发式处理。这个命令用来让有登录态的机器产出样本。
+ */
+async function probeProduct(opts) {
+  const wsUrl = `ws://127.0.0.1:${opts.cdpPort}/devtools/browser`;
+  let cdp;
+  try {
+    cdp = await connectWithRetry(wsUrl);
+  } catch {
+    emit('error', {
+      code: 'BROWSER_NOT_CONNECTED',
+      message: `连不上 Chrome 调试端口 ${opts.cdpPort}`,
+      need_user: true,
+    });
+    return 3;
+  }
+
+  let targetId = null;
+  const bodies = [];
+  const pendingIds = new Set();
+
+  try {
+    const created = await cdp.send('Target.createTarget', { url: 'about:blank' }, { sessionId: null });
+    targetId = created.targetId;
+    const attached = await cdp.send('Target.attachToTarget', { targetId, flatten: true }, { sessionId: null });
+    cdp.sessionId = attached.sessionId;
+
+    cdp.on('Network.responseReceived', (p) => {
+      if (String(p?.response?.url ?? '').includes(PDP_MARKER)) pendingIds.add(p.requestId);
+    });
+    cdp.on('Network.loadingFinished', (p) => {
+      if (!pendingIds.has(p.requestId)) return;
+      pendingIds.delete(p.requestId);
+      cdp
+        .send('Network.getResponseBody', { requestId: p.requestId }, 15000)
+        .then(({ body, base64Encoded }) => {
+          const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
+          bodies.push(JSON.parse(text));
+        })
+        .catch(() => {});
+    });
+
+    await cdp.send('Page.enable');
+    await cdp.send('Network.enable');
+    await cdp.send('Page.navigate', { url: opts.probe }, 45000);
+    for (let i = 0; i < 40 && !bodies.length; i++) await sleep(500);
+
+    if (!bodies.length) {
+      emit('error', {
+        code: 'PDP_NOT_CAPTURED',
+        message: '没抓到商品页价格接口。页面可能打不开、需要登录，或商品已下架。',
+        need_user: false,
+      });
+      return 1;
+    }
+
+    const data = bodies[0].data;
+    if (!data) {
+      emit('error', {
+        code: 'PDP_INVALID',
+        message: `响应没有 data（error=${bodies[0].error}），可能被风控降级`,
+        need_user: false,
+      });
+      return 1;
+    }
+
+    const m = data.item?.models?.[0];
+    emit('probe', {
+      url: opts.probe,
+      currency: data.item?.currency,
+      model0: m
+        ? {
+            model_id: m.model_id,
+            price: m.price,
+            price_before_discount: m.price_before_discount,
+            has_stock: m.has_stock,
+          }
+        : null,
+      shop_vouchers: (data.shop_vouchers ?? []).map((v) => ({
+        code: v.voucher_code,
+        type: v.voucher_discount_type,
+        min_spend: v.min_spend,
+        used_price: v.used_price,
+        discount_value: v.discount_value,
+        discount_percentage: v.discount_percentage,
+        discount_cap: v.discount_cap,
+      })),
+      price_breakdown: data.price_breakdown ?? null,
+    });
+    return 0;
+  } catch (err) {
+    emit('error', { code: 'PROBE_FAILED', message: String(err), need_user: false });
+    return 1;
+  } finally {
+    if (targetId) {
+      try {
+        await cdp.send('Target.closeTarget', { targetId }, { sessionId: null });
+      } catch {
+        /* 关不掉不影响结果 */
+      }
+    }
+    cdp.close();
+  }
 }
 
 function defaultOutPath(username) {
@@ -1040,6 +1174,8 @@ async function main() {
     return 0;
   }
   if (opts.selfTest) return selfTest();
+
+  if (opts.probe) return probeProduct(opts);
 
   if (opts.checkBrowser) {
     try {
@@ -1328,6 +1464,27 @@ function selfTest() {
     withVoucher: true,
   });
   check('券折扣-未达门槛为空', belowMinRows[0].voucher_discount, null);
+
+  // 百分比券：取自真实浮层（原价 10.99，商品折扣 -2.10 → 售价 8.89，券 12% off → -1.07）
+  const pctRow = (pct, cap) =>
+    buildRows({
+      shopName: 'S', targetShopId: '1', site: 'sg',
+      itemCard: { item_id: '201', shop_id: '1' },
+      pdpItem: {
+        itemid: 201, shopid: 1, title: '百分比券商品', currency: 'SGD',
+        models: [{
+          model_id: 1, price: 889000, price_before_discount: 1099000,
+          has_stock: true, is_clickable: true, extinfo: { tier_index: [0] },
+        }],
+      },
+      shopVouchers: [{ min_spend: 0, discount_percentage: pct, discount_cap: cap }],
+      withVoucher: true,
+    })[0];
+
+  check('百分比券-1200 视为 12%', pctRow(1200, null).voucher_discount, 1.07);
+  check('百分比券-12 视为 12%', pctRow(12, null).voucher_discount, 1.07);
+  check('百分比券-受上限封顶', pctRow(1200, 50000).voucher_discount, 0.5);
+  check('百分比券-商品折扣仍为差额', pctRow(1200, null).item_discount, 2.1);
 
   const badRows = buildRows({
     shopName: 'S', targetShopId: '1', site: 'tw',

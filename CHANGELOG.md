@@ -2,6 +2,18 @@
 
 遵循[语义化版本](https://semver.org/lang/zh-CN/)。版本号对应 git tag（`v0.0.1`）。
 
+## [0.2.2] - 2026-11-24
+
+### 修复
+
+- 百分比券的单位按实测校正：`discount_percentage` 直接是整数百分比（`10` = 10%），去掉此前「大于 100 视为 ×100」的猜测逻辑。异常值（>100）按 100% 处理
+
+### 验证
+
+- 用 `shopee.sg/product/71350056/25372097679` 的真实响应核对：
+  - `{min_spend:150000, discount_percentage:10, discount_cap:150000}` 在售价 12.29 时折抵 1.23，与页面浮层 `discount_amount: 123000` 一致
+  - 同店 `{discount_percentage:85, discount_cap:30000}` 实际折抵 0.30，确认 cap 必须生效
+
 ## [0.2.1] - 2026-11-24
 
 ### 修复

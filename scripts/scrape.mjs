@@ -246,14 +246,13 @@ const round2 = (n) => Math.round(n * 100) / 100;
  * - 百分比券：discount_percentage 有值，折抵 = 售价 × 比例，可被 discount_cap 封顶
  * - 固定金额券：discount_value / used_price 有值
  *
- * 百分比单位未拿到真实样本（马来站这批商品全是固定券），按 >100 视为
- * ×100 存储（1200 = 12%）处理，其余按整数百分比。1%-100% 区间两种存储
- * 都会得到同一个结果；超出这个区间需要真实样本重新确认。
+ * 实测（shopee.sg）：discount_percentage 是整数百分比，10 表示 10%。
+ * 超过 100 视为异常数据，按 100% 处理。
  */
 function voucherAmount(v, price) {
   const pctRaw = Number(v.discount_percentage);
   if (Number.isFinite(pctRaw) && pctRaw > 0) {
-    const rate = pctRaw > 100 ? pctRaw / 10000 : pctRaw / 100;
+    const rate = Math.min(pctRaw, 100) / 100;
     let amount = price * rate;
     const cap = toMoney(v.discount_cap);
     if (cap !== null && cap > 0) amount = Math.min(amount, cap);
@@ -1465,7 +1464,7 @@ function selfTest() {
   });
   check('券折扣-未达门槛为空', belowMinRows[0].voucher_discount, null);
 
-  // 百分比券：取自真实浮层（原价 10.99，商品折扣 -2.10 → 售价 8.89，券 12% off → -1.07）
+  // 百分比券：直接取自 shopee.sg 实测响应（10 表示 10%，不是 ×100 存储）
   const pctRow = (pct, cap) =>
     buildRows({
       shopName: 'S', targetShopId: '1', site: 'sg',
@@ -1481,10 +1480,10 @@ function selfTest() {
       withVoucher: true,
     })[0];
 
-  check('百分比券-1200 视为 12%', pctRow(1200, null).voucher_discount, 1.07);
-  check('百分比券-12 视为 12%', pctRow(12, null).voucher_discount, 1.07);
-  check('百分比券-受上限封顶', pctRow(1200, 50000).voucher_discount, 0.5);
-  check('百分比券-商品折扣仍为差额', pctRow(1200, null).item_discount, 2.1);
+  check('百分比券-10 表示 10%', pctRow(10, null).voucher_discount, 0.89);
+  check('百分比券-受上限封顶', pctRow(10, 50000).voucher_discount, 0.5);
+  check('百分比券-异常值按 100% 封顶', pctRow(1200, null).voucher_discount, 8.89);
+  check('百分比券-商品折扣仍为差额', pctRow(10, null).item_discount, 2.1);
 
   const badRows = buildRows({
     shopName: 'S', targetShopId: '1', site: 'tw',

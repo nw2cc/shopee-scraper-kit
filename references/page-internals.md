@@ -110,7 +110,16 @@ data.shop_vouchers[]
 
 固定金额券的 `discount_percentage` 和 `discount_cap` 返回 `0`（不是 `null`），判定时要用 `> 0`。
 
-百分比字段的单位未拿到真实样本：`1200` 和 `12` 都可能表示 12%。实现按「大于 100 视为 ×100 存储」处理，1%–100% 区间两种存储结果一致。
+实测（shopee.sg，2026-11）：`discount_percentage` 直接是整数百分比，`10` 表示 10%，不是 ×100 存储。`discount_cap` 是封顶金额（1/100000）。
+
+以实测券 `{min_spend: 150000, discount_percentage: 10, discount_cap: 150000}` 为例：
+
+| 售价 | 10% 折抵 | 封顶后 |
+|---|---|---|
+| 12.29 | 1.23 | 1.23（未触顶） |
+| 18.59 | 1.86 | 1.50（触顶） |
+
+同店还有 `discount_percentage: 85` 配 `discount_cap: 30000` 的券——标称 85% 折但实际只抵 0.30，说明**必须按 cap 封顶**，不能直接用百分比算。
 
 `data.product_price.final_price_info.final_price_vouchers.shop_voucher.voucher_discount` 是前端为选中规格算出的那张券，可用来印证上面的规则。注意 `price_breakdown` 只对应当前选中规格——实测 `model[0].price` 是 RM10.6 时，`price_breakdown.price` 显示的是默认选中规格的 RM20。
 

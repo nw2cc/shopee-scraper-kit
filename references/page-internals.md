@@ -75,6 +75,36 @@ data.item
 
 **价格与库存不在 `price_info` 上**：`has_model=true` 时 `price_info` 通常为空，别去那里找。
 
+### 折扣明细与店铺券
+
+页面上「券后价」图标 hover 出来的「价格明细」浮层，数据来自 `data.price_breakdown`（在 `data` 层，不在 `item` 里）：
+
+```
+data.price_breakdown
+  ├ price.single_value                 券后价（当前选中规格）
+  ├ price_before_discount.single_value 原价
+  └ discount_breakdown[]
+      ├ type: 0  price_source: "商品折扣"
+      │            discount_amount: 2700000
+      └ type: 2  price_source: "商店优惠券折扣"
+                   discount_amount: 300000
+                   shop_voucher: {min_spend, discount_type, discount_value}
+```
+
+它只反映**当前选中规格**。要给每个规格单独算折扣，用 `data.shop_vouchers`：
+
+```
+data.shop_vouchers[]
+  ├ voucher_code           券码
+  ├ min_spend              使用门槛（1/100000）
+  ├ used_price             折抵金额（1/100000）
+  └ voucher_discount_type  0 = 固定金额
+```
+
+实现按规格售价筛 `min_spend <= price` 的券，取 `used_price` 最大的一张。`voucher_discount_type` 非 0（百分比券）不处理——字段语义未实测，猜一个值会产出错数字。
+
+`data.product_price.final_price_info.final_price_vouchers.shop_voucher.voucher_discount` 是前端为选中规格算出的那张券，可用来印证上面的规则。
+
 ## 3. 站点差异
 
 各站点域名：`shopee.tw` / `shopee.sg` / `shopee.com.my` / `shopee.co.th` /

@@ -54,6 +54,8 @@ const COLUMNS = [
   ['price', '售价', 'price'],
   ['price_before_discount', '划线价', 'price_before_discount'],
   ['discount_percent', '售价占原价(%)', 'price_over_list_pct'],
+  ['item_discount', '商品折扣', 'item_discount'],
+  ['voucher_discount', '券折扣', 'voucher_discount'],
   ['voucher_price', '参考券后价', 'voucher_price'],
   ['stock', '库存', 'stock'],
   ['available', '可售', 'available'],
@@ -223,10 +225,39 @@ function parseItemCards(body) {
   return { cards: out, noMore, total };
 }
 
-function parsePdpItem(body) {
+function parsePdpPayload(body) {
   const data = body && typeof body === 'object' ? body.data : null;
-  const item = data && typeof data === 'object' ? data.item : null;
-  return item && typeof item === 'object' ? item : null;
+  if (!data || typeof data !== 'object') return null;
+  const item = data.item && typeof data.item === 'object' ? data.item : null;
+  if (!item) return null;
+  return {
+    item,
+    // 店铺券列表：适用门槛与折抵金额都在这里，浮层「价格明细」用它算券折扣
+    shopVouchers: Array.isArray(data.shop_vouchers) ? data.shop_vouchers : [],
+  };
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * 从店铺券里挑出该售价可用的、折抵最大的一张。
+ *
+ * 券字段单位是 1/100000，price 是元。只处理固定金额券（voucher_discount_type=0）；
+ * 百分比券的字段语义未经实测，返回 null 而不是猜一个值。
+ */
+function pickVoucherDiscount(vouchers, price) {
+  if (!Array.isArray(vouchers) || price === null || price === undefined) return null;
+  let best = 0;
+  for (const v of vouchers) {
+    if (!v || typeof v !== 'object') continue;
+    const type = v.voucher_discount_type ?? 0;
+    if (type !== 0) continue;
+    const minSpend = toMoney(v.min_spend);
+    if (minSpend !== null && price < minSpend) continue;
+    const amount = toMoney(v.used_price ?? v.discount_value);
+    if (amount !== null && amount > best) best = amount;
+  }
+  return best > 0 ? round2(best) : null;
 }
 
 function toMoney(raw) {
@@ -280,7 +311,15 @@ function modelStock(model, item) {
   return null;
 }
 
-function buildRows({ shopName, targetShopId, site, itemCard, pdpItem, withVoucher }) {
+function buildRows({
+  shopName,
+  targetShopId,
+  site,
+  itemCard,
+  pdpItem,
+  shopVouchers = [],
+  withVoucher,
+}) {
   const shopId = String(itemCard.shop_id || targetShopId || pdpItem.shopid || '');
   const itemId = String(itemCard.item_id || pdpItem.itemid || '');
   if (!itemId) return [];
@@ -304,12 +343,22 @@ function buildRows({ shopName, targetShopId, site, itemCard, pdpItem, withVouche
     collected_at: ts,
   };
 
+  // 两列折扣都按规格自己的售价算：商品折扣 = 划线价 - 售价，券折扣 = 该售价可用的最优店铺券
+  const discountsOf = (price, priceBefore) => ({
+    itemDiscount:
+      price !== null && priceBefore !== null && priceBefore > price
+        ? round2(priceBefore - price)
+        : null,
+    voucherDiscount: pickVoucherDiscount(shopVouchers, price),
+  });
+
   // 无规格商品：接口不给 models，价格挂在 item 上，产一行 model_id=0
   if (!models.length) {
     const available = modelAvailable(pdpItem, pdpItem);
     const price = available ? toMoney(pdpItem.price) : null;
     const before = toMoney(pdpItem.price_before_discount);
     const priceBefore = available && before ? before : null;
+    const { itemDiscount, voucherDiscount } = discountsOf(price, priceBefore);
     return [
       {
         ...base,
@@ -323,6 +372,8 @@ function buildRows({ shopName, targetShopId, site, itemCard, pdpItem, withVouche
           available && price !== null && priceBefore
             ? Math.round((price / priceBefore) * 1000) / 10
             : null,
+        item_discount: itemDiscount,
+        voucher_discount: voucherDiscount,
         voucher_price: available && withVoucher ? computeVoucher(price, site) : null,
         stock: modelStock(pdpItem, pdpItem),
         available,
@@ -343,6 +394,7 @@ function buildRows({ shopName, targetShopId, site, itemCard, pdpItem, withVouche
     const price = available ? toMoney(model.price) : null;
     const before = toMoney(model.price_before_discount);
     const priceBefore = available && before ? before : null;
+    const { itemDiscount, voucherDiscount } = discountsOf(price, priceBefore);
 
     rows.push({
       ...base,
@@ -356,6 +408,8 @@ function buildRows({ shopName, targetShopId, site, itemCard, pdpItem, withVouche
         available && price !== null && priceBefore
           ? Math.round((price / priceBefore) * 1000) / 10
           : null,
+      item_discount: itemDiscount,
+      voucher_discount: voucherDiscount,
       voucher_price: available && withVoucher ? computeVoucher(price, site) : null,
       stock: modelStock(model, pdpItem),
       available,
@@ -792,8 +846,8 @@ class Scraper {
     await this.checkRisk(url);
 
     for (const body of this.takeCaptured(PDP_MARKER)) {
-      const item = parsePdpItem(body);
-      if (item) return item;
+      const payload = parsePdpPayload(body);
+      if (payload) return payload;
     }
     return null;
   }
@@ -845,7 +899,8 @@ class Scraper {
           targetShopId: String(card.shop_id || fallbackShopId || ''),
           site: this.opts.site,
           itemCard: card,
-          pdpItem: pdp,
+          pdpItem: pdp.item,
+          shopVouchers: pdp.shopVouchers,
           withVoucher: this.opts.withVoucher,
         });
         if (!rows.length) {
@@ -1235,6 +1290,44 @@ function selfTest() {
   check('无规格-行数', flatRows.length, 1);
   check('无规格-model_id', flatRows[0].model_id, '0');
   check('无规格-价格', flatRows[0].price, 99);
+
+  // 折扣两列：商品折扣 = 划线价 - 售价；券折扣取该售价可用的最大张
+  check('造行-商品折扣', rows[0].item_discount, 800);
+  check('造行-无券时券折扣为空', rows[0].voucher_discount, null);
+
+  const voucherRows = buildRows({
+    shopName: 'S', targetShopId: '9001', site: 'my',
+    itemCard: { item_id: '111', shop_id: '9001' },
+    pdpItem: {
+      itemid: 111, shopid: 9001, title: '券测试', currency: 'MYR',
+      models: [{
+        model_id: 900, price: 2000000, price_before_discount: 5000000,
+        has_stock: true, is_clickable: true, extinfo: { tier_index: [0] },
+      }],
+    },
+    shopVouchers: [
+      { voucher_discount_type: 0, min_spend: 2000000, used_price: 300000 },
+      { voucher_discount_type: 0, min_spend: 1000000, used_price: 100000 },
+    ],
+    withVoucher: true,
+  });
+  check('券折扣-取折抵最大', voucherRows[0].voucher_discount, 3);
+  check('券折扣-商品折扣', voucherRows[0].item_discount, 30);
+
+  const belowMinRows = buildRows({
+    shopName: 'S', targetShopId: '9001', site: 'my',
+    itemCard: { item_id: '112', shop_id: '9001' },
+    pdpItem: {
+      itemid: 112, shopid: 9001, title: '低价商品', currency: 'MYR',
+      models: [{
+        model_id: 901, price: 500000,
+        has_stock: true, is_clickable: true, extinfo: { tier_index: [0] },
+      }],
+    },
+    shopVouchers: [{ voucher_discount_type: 0, min_spend: 2000000, used_price: 300000 }],
+    withVoucher: true,
+  });
+  check('券折扣-未达门槛为空', belowMinRows[0].voucher_discount, null);
 
   const badRows = buildRows({
     shopName: 'S', targetShopId: '1', site: 'tw',
